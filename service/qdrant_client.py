@@ -141,7 +141,7 @@ class QdrantClientService:
             )
             points.append(point)
 
-            return points
+        return points
     
     def get_next_id(self) -> int:
         try:

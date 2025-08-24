@@ -109,22 +109,30 @@ class DocumentProcessor:
     def process(self, file_path: str, filename: str):
         temp_files, page_offsets  = self._split_pdf_to_temp_files(file_path, filename)
         total_pages = fitz.open(file_path).page_count
-        full_doc = []
+        full_doc = None
         for idx, temp_file in enumerate(temp_files):
             try:
                 logging.info(f"Processing temporary file: {temp_file}")
                 doc = self._converter.convert(source=temp_file).document
                 
                 offset = page_offsets[idx]
-                for page_item in doc.pages.values():
-                    page_item.page_no += offset # Update page number to reflect the original document
-                if not full_doc:
-                    # first page
+                updated_pages = {}
+                for page in doc.pages.values():
+                    page.page_no += offset # Update nomor halaman
+                    updated_pages[page.page_no] = page # Simpan dengan key (nomor halaman) yang baru
+                
+                # Ganti dictionary pages di objek doc saat ini dengan yang sudah dikoreksi
+                doc.pages = updated_pages
+
+                # 2. Logika penggabungan yang baru
+                if full_doc is None:
+                    # Jika ini adalah dokumen pertama yang berhasil diproses,
+                    # jadikan ia sebagai dokumen utama.
                     full_doc = doc
                 else:
-                    # merge pages
-                    for _, v in doc.pages.items():
-                        full_doc.pages[v.page_no] = v
+                    # Untuk dokumen-dokumen berikutnya, gabungkan kamus 'pages' mereka
+                    # ke dalam dokumen utama.
+                    full_doc.pages.update(doc.pages)
 
             except Exception as e:
                 logging.error(f"Failed to convert temporary file {temp_file}: {e}")
@@ -137,8 +145,9 @@ class DocumentProcessor:
 
        
         logging.info(f"Final merged pages: {list(full_doc.pages.keys())}")
+        # logging.info(f"Full doc: {full_doc.dict()}")
         chunks = list(self._chunker.chunk(dl_doc=full_doc))
-
+        
         docs = [self._chunker.contextualize(chunk=chunk) for chunk in chunks]
 
         bm25_embeddings = list(self._bm25_embbeding_model.embed(docs))
@@ -161,6 +170,7 @@ class DocumentProcessor:
             "colbert_vectors": late_interaction_embeddings,
             "gemini_vectors": gemini_embeddings
         }
+    
     def save(self, filename):
         with open(filename, 'w') as file:
             file.write(self.process())
