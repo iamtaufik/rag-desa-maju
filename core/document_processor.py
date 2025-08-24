@@ -118,12 +118,13 @@ class DocumentProcessor:
                 offset = page_offsets[idx]
                 for page_item in doc.pages.values():
                     page_item.page_no += offset # Update page number to reflect the original document
-
+                if not full_doc:
+                    # first page
+                    full_doc = doc
                 else:
                     # merge pages
-                    max_key = max(full_doc.pages.keys(), default=0)
-                    for k, v in doc.pages.items():
-                        full_doc.pages[max_key + k] = v
+                    for _, v in doc.pages.items():
+                        full_doc.pages[v.page_no] = v
 
             except Exception as e:
                 logging.error(f"Failed to convert temporary file {temp_file}: {e}")
@@ -135,6 +136,7 @@ class DocumentProcessor:
                     pass
 
        
+        logging.info(f"Final merged pages: {list(full_doc.pages.keys())}")
         chunks = list(self._chunker.chunk(dl_doc=full_doc))
 
         docs = [self._chunker.contextualize(chunk=chunk) for chunk in chunks]
@@ -148,9 +150,9 @@ class DocumentProcessor:
         )
       
         gemini_embeddings = gemini_embeddings_resp['embedding']
-        logging.info(f"Processed {len(docs)} documents with {len(chunks)} chunks.")
-        logging.info(f"Docs: {docs}")
-        logging.info(f"\n\nChunks: {chunks}\n\n")
+        # logging.info(f"Processed {len(docs)} documents with {len(chunks)} chunks.")
+        # logging.info(f"Docs: {docs}")
+        # logging.info(f"\n\nChunks: {chunks}\n\n")
         return {
             "docs": docs,
             "chunks": chunks,
