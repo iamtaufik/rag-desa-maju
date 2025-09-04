@@ -10,6 +10,7 @@ from qdrant_client.http.models import (
 )
 from qdrant_client.http.models import VectorParams, Distance
 from fastembed import SparseTextEmbedding, LateInteractionTextEmbedding
+from qdrant_client.http.models import NamedVector, NamedSparseVector, SparseVector
 from qdrant_client import QdrantClient
 from datetime import datetime
 from settings import (
@@ -142,6 +143,124 @@ class QdrantClientService:
             points.append(point)
 
         return points
+    
+    def search(self, collection_name: str, query_vector: List[float], limit: int = 5) -> List[PointStruct]:
+        if not self._client:
+            logging.error("Qdrant client is not connected.")
+            return []
+
+        try:
+            hits = self._client.search(
+                collection_name=collection_name,
+                query_vector=query_vector,
+                limit=limit
+            )
+            logging.info(f"Search completed with {len(hits)} hits.")
+            return hits
+        except Exception as e:
+            logging.error(f"Search failed: {e}")
+            return []
+        
+    def hybrid_search(
+        self, query: str, limit: int = 5,
+        alpha: float = 0.5, beta: float = 0.3, gamma: float = 0.2
+    ):
+        """
+        Hybrid search menggunakan:
+        - Gemini (dense vector, models/text-embedding-004)
+        - BM25 (sparse vector, bm25)
+        - ColBERT (multi-vector, colbertv2)
+        """
+
+        # --- 1. Buat embedding query ---
+        # (Bagian ini sudah benar)
+        query_gemini_vector = self._genai.embed_content(
+            content=query, model="models/text-embedding-004", task_type="retrieval_query"
+        )['embedding']
+        
+
+        query_bm25_vectors = list(self._bm25_model.query_embed(query=query))
+        sparse_vector_qdrant = None
+        if query_bm25_vectors:
+            query_bm25_vector = query_bm25_vectors[0]
+            sparse_vector_qdrant = SparseVector(
+                indices=query_bm25_vector.indices.tolist(),
+                values=query_bm25_vector.values.tolist()
+            )
+
+        query_colbert_vectors = list(self._colbert_model.query_embed(query=query))
+        query_colbert_vector = query_colbert_vectors[0].tolist() if query_colbert_vectors else None
+
+        # --- 2. Search tiap vector space ---
+        try:
+            gemini_hits = self._client.search(
+                collection_name=VECTOR_COLLECTION_NAME,
+                query_vector=NamedVector(
+                    name=VECTOR_NAMES["gemini"],
+                    vector=query_gemini_vector
+                ),
+                limit=limit
+            )
+        except Exception as e:
+            logging.error(f"Gemini search failed: {e}")
+
+        bm25_hits = []
+        if sparse_vector_qdrant:
+            bm25_hits = self._client.search(
+                collection_name=VECTOR_COLLECTION_NAME,
+                query_vector=NamedSparseVector(
+                    name=VECTOR_NAMES["bm25"],
+                    vector=sparse_vector_qdrant
+                ),
+                limit=limit
+            )
+
+        colbert_hits = []
+        try:
+            if query_colbert_vector:
+                # ================================================================
+                # PERBAIKAN DI SINI
+                # ================================================================
+                # Daripada menggunakan NamedVector yang validasinya ketat,
+                # kita berikan tuple (nama_vektor, data_vektor_multivector).
+                # qdrant-client akan menginterpretasikannya dengan benar
+                # tanpa memicu error validasi Pydantic.
+                colbert_hits = self._client.search(
+                    collection_name=VECTOR_COLLECTION_NAME,
+                    query_vector=(VECTOR_NAMES["colbert"], query_colbert_vector),
+                    limit=limit
+                )
+                # ================================================================
+                # AKHIR PERBAIKAN
+                # ================================================================
+        except Exception as e:
+            logging.error(f"Colbert search failed: {e}")
+        # --- 3. Gabungkan hasil dengan bobot ---
+        # (Bagian ini sudah benar)
+        combined_scores = {}
+
+        def add_scores(hits, weight):
+            for hit in hits:
+                doc_id = hit.id
+                score = hit.score * weight
+                if doc_id not in combined_scores:
+                    combined_scores[doc_id] = {"hit": hit, "score": score}
+                else:
+                    combined_scores[doc_id]["score"] += score
+
+        add_scores(gemini_hits, alpha)
+        add_scores(bm25_hits, beta)
+        add_scores(colbert_hits, gamma)
+
+        # --- 4. Urutkan hasil akhir ---
+        # (Bagian ini sudah benar)
+        ranked_hits = sorted(
+            combined_scores.values(),
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        return [entry["hit"] for entry in ranked_hits[:limit]]
     
     def get_next_id(self) -> int:
         try:

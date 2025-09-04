@@ -20,6 +20,10 @@ LOCAL_STORAGE_PATH = os.getenv("LOCAL_STORAGE_PATH", "storage")
 MINIO_HOST = os.getenv("MINIO_HOST", "minio")
 MINIO_PORT = int(os.getenv("MINIO_PORT", "9000"))
 
+GEMINI_EMBEDDING_MODEL = "models/text-embedding-004"
+MODEL_ID = "nomic-ai/nomic-embed-text-v2-moe"
+MODEL_NAME = "nomic-embed-text-v2-moe"
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     ""

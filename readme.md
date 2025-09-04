@@ -1,1 +1,1 @@
-# Instalation Setup
+# Installation Setup

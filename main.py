@@ -4,6 +4,7 @@ from service.qdrant_client import QdrantClientService
 from service.rabbitmq_producer import RabbitmqProducer
 from service.rabbitmq_consumer import RabbitmqConsumer
 from routes.uploads import router as uploads_router
+from routes.chat import router as chat_router
 import logging
 import threading
 import os
@@ -76,4 +77,5 @@ app = FastAPI(lifespan=lifespan)
 async def root():
     return {"message": "Hello, World!"}
 
-app.include_router(uploads_router, prefix="/uploads")
+app.include_router(uploads_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
