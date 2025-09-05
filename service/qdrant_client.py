@@ -124,7 +124,9 @@ class QdrantClientService:
             
             # 2. Konversi Vektor Colbert ke format yang diharapkan
             # Vektor Colbert dari fastembed adalah array NumPy 2D (list of lists)
-            colbert_vector_list = colbert_vector.tolist()
+            colbert_vector_list = [vec.tolist() for vec in colbert_vector]
+
+            logging.info(f"Insert ColBERT vector shape: {len(colbert_vector_list)} x {len(colbert_vector_list[0])}")
 
             point = PointStruct(
                 id=start_id + i,
@@ -162,9 +164,9 @@ class QdrantClientService:
             return []
         
     def hybrid_search(
-        self, query: str, limit: int = 5,
-        alpha: float = 0.5, beta: float = 0.3, gamma: float = 0.2
-    ):
+    self, query: str, limit: int = 5,
+    alpha: float = 0.5, beta: float = 0.3, gamma: float = 0.2
+):
         """
         Hybrid search menggunakan:
         - Gemini (dense vector, models/text-embedding-004)
@@ -173,12 +175,10 @@ class QdrantClientService:
         """
 
         # --- 1. Buat embedding query ---
-        # (Bagian ini sudah benar)
         query_gemini_vector = self._genai.embed_content(
             content=query, model="models/text-embedding-004", task_type="retrieval_query"
         )['embedding']
         
-
         query_bm25_vectors = list(self._bm25_model.query_embed(query=query))
         sparse_vector_qdrant = None
         if query_bm25_vectors:
@@ -188,10 +188,8 @@ class QdrantClientService:
                 values=query_bm25_vector.values.tolist()
             )
 
-        query_colbert_vectors = list(self._colbert_model.query_embed(query=query))
-        query_colbert_vector = query_colbert_vectors[0].tolist() if query_colbert_vectors else None
-
-        # --- 2. Search tiap vector space ---
+        # --- 2. Perform searches ---
+        gemini_hits = []
         try:
             gemini_hits = self._client.search(
                 collection_name=VECTOR_COLLECTION_NAME,
@@ -206,37 +204,41 @@ class QdrantClientService:
 
         bm25_hits = []
         if sparse_vector_qdrant:
-            bm25_hits = self._client.search(
-                collection_name=VECTOR_COLLECTION_NAME,
-                query_vector=NamedSparseVector(
-                    name=VECTOR_NAMES["bm25"],
-                    vector=sparse_vector_qdrant
-                ),
-                limit=limit
-            )
-
-        colbert_hits = []
-        try:
-            if query_colbert_vector:
-                # ================================================================
-                # PERBAIKAN DI SINI
-                # ================================================================
-                # Daripada menggunakan NamedVector yang validasinya ketat,
-                # kita berikan tuple (nama_vektor, data_vektor_multivector).
-                # qdrant-client akan menginterpretasikannya dengan benar
-                # tanpa memicu error validasi Pydantic.
-                colbert_hits = self._client.search(
+            try:
+                bm25_hits = self._client.search(
                     collection_name=VECTOR_COLLECTION_NAME,
-                    query_vector=(VECTOR_NAMES["colbert"], query_colbert_vector),
+                    query_vector=NamedSparseVector(
+                        name=VECTOR_NAMES["bm25"],
+                        vector=sparse_vector_qdrant
+                    ),
                     limit=limit
                 )
-                # ================================================================
-                # AKHIR PERBAIKAN
-                # ================================================================
+            except Exception as e:
+                logging.error(f"BM25 search failed: {e}")
+
+        # ColBERT search - Fixed implementation
+        colbert_hits = []
+        try:
+            query_colbert_vectors = list(self._colbert_model.query_embed(query=query))
+            if query_colbert_vectors:
+                # ColBERT returns multi-vectors, convert numpy arrays to lists
+                colbert_multi_vector = query_colbert_vectors[0]  # Get the first (and likely only) multi-vector
+                
+                # Convert each numpy array in the multi-vector to a Python list
+                colbert_vector_list = [vec.tolist() for vec in colbert_multi_vector]
+                
+                logging.info(f"ColBERT query vector shape: {len(colbert_vector_list)} vectors of {len(colbert_vector_list[0])} dimensions")
+                
+                # For multi-vector search, use tuple format (vector_name, multi_vector_list)
+                colbert_hits = self._client.search(
+                    collection_name=VECTOR_COLLECTION_NAME,
+                    query_vector=(VECTOR_NAMES["colbert"], colbert_vector_list),
+                    limit=limit
+                )
         except Exception as e:
             logging.error(f"Colbert search failed: {e}")
+
         # --- 3. Gabungkan hasil dengan bobot ---
-        # (Bagian ini sudah benar)
         combined_scores = {}
 
         def add_scores(hits, weight):
@@ -253,7 +255,6 @@ class QdrantClientService:
         add_scores(colbert_hits, gamma)
 
         # --- 4. Urutkan hasil akhir ---
-        # (Bagian ini sudah benar)
         ranked_hits = sorted(
             combined_scores.values(),
             key=lambda x: x["score"],
@@ -261,7 +262,6 @@ class QdrantClientService:
         )
 
         return [entry["hit"] for entry in ranked_hits[:limit]]
-    
     def get_next_id(self) -> int:
         try:
             collection_info = self._client.get_collection(collection_name=VECTOR_COLLECTION_NAME)

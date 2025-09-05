@@ -20,10 +20,9 @@ async def chat_stream(query: str):
             return JSONResponse(content={"message": "Qdrant client is not connected."}, status_code=500)
 
         document_retrieval = DocumentRetrieval(vector_db_client=qdrant_client)
-        documents = document_retrieval.retrieve_hybrid(query, top_k=10)
-
-        def event_generator():
-            for chunk_text in document_retrieval.generate_response_stream(query, documents):
+        async def event_generator():
+            stream = await document_retrieval.answer_query(query, top_k=10)
+            async for chunk_text in stream:
                 yield chunk_text
 
         return StreamingResponse(event_generator(), media_type="text/plain")
