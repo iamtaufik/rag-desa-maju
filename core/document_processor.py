@@ -5,6 +5,7 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+from core.minio import FileProcessor
 from docling_core.types.doc import (
     DoclingDocument
 )
@@ -104,7 +105,16 @@ class DocumentProcessor:
 
         doc.close()
         return temp_files, page_offsets
+    
+    def download_file_to_local(self, file_name: str):
+        try:
+            file_processor = FileProcessor()
+            file = file_processor.download_from_minio_to_local(file_name)
 
+            return file['local_path']
+        except Exception as e:
+            logging.error(f"Failed to download file from MinIO: {e}")
+            raise e
 
     def process(self, file_path: str, filename: str):
         temp_files, page_offsets  = self._split_pdf_to_temp_files(file_path, filename)
@@ -174,3 +184,6 @@ class DocumentProcessor:
     def save(self, filename):
         with open(filename, 'w') as file:
             file.write(self.process())
+
+    def teting_function(self, doc_info: dict):
+        return f"Document path is: {doc_info['path']}"

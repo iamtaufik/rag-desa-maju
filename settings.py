@@ -29,4 +29,7 @@ DATABASE_URL = os.getenv(
     ""
 )
 
-
+REDIS_URL = os.getenv(
+    "REDIS_URL",
+    "redis://:taufikdev@localhost:6379/0"
+)

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 from core.minio import FileProcessor
+from worker.tasks import document_processing_task
 import logging
 
 logging.basicConfig(
@@ -19,27 +20,35 @@ async def upload_file(file: UploadFile = File()):
         
         file_processor = FileProcessor()
         result = await file_processor.upload_to_minio(file)
-        try:
-            from main import rabbitmq_producer
+        document_processing_task.delay({
+            "file_name": result["file_name"],
+            "file_path": result["file_path"],
+            "content_type": result["content_type"],
+            "size": result["size"],
+            "upload_time": result["upload_time"],
+            "action": "file_uploaded"
+        })
+        # try:
+        #     from main import rabbitmq_producer
 
-            if not rabbitmq_producer:
-                return JSONResponse(content={"message": "RabbitMQ producer is not available."}, status_code=500)
-            else:
-                rabbitmq_result = rabbitmq_producer.publish(
-                    message={
-                        "file_name": result["file_name"],
-                        "file_path": result["file_path"],
-                        "content_type": result["content_type"],
-                        "size": result["size"],
-                        "upload_time": result["upload_time"],
-                        "action": "file_uploaded"
-                    }
-                )
-        except Exception as e:
-            if result:
-                logging.error(f"Failed to publish message to RabbitMQ: {str(e)}")
-                file_processor.delete_from_minio(result["file_name"])
-            raise Exception(f"Failed to publish message to RabbitMQ: {str(e)}")
+        #     if not rabbitmq_producer:
+        #         return JSONResponse(content={"message": "RabbitMQ producer is not available."}, status_code=500)
+        #     else:
+        #         rabbitmq_result = rabbitmq_producer.publish(
+        #             message={
+        #                 "file_name": result["file_name"],
+        #                 "file_path": result["file_path"],
+        #                 "content_type": result["content_type"],
+        #                 "size": result["size"],
+        #                 "upload_time": result["upload_time"],
+        #                 "action": "file_uploaded"
+        #             }
+        #         )
+        # except Exception as e:
+        #     if result:
+        #         logging.error(f"Failed to publish message to RabbitMQ: {str(e)}")
+        #         file_processor.delete_from_minio(result["file_name"])
+        #     raise Exception(f"Failed to publish message to RabbitMQ: {str(e)}")
 
         return JSONResponse(content={"filename": file.filename, "message": result}, status_code=200)
     except Exception as e:
